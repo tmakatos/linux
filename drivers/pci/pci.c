@@ -4903,7 +4903,7 @@ int pci_bridge_secondary_bus_reset(struct pci_dev *dev)
 }
 EXPORT_SYMBOL_GPL(pci_bridge_secondary_bus_reset);
 
-static int pci_parent_bus_reset(struct pci_dev *dev, int probe)
+int pci_parent_bus_reset(struct pci_dev *dev, int probe)
 {
 	struct pci_dev *pdev;
 
@@ -4920,6 +4920,7 @@ static int pci_parent_bus_reset(struct pci_dev *dev, int probe)
 
 	return pci_bridge_secondary_bus_reset(dev->bus->self);
 }
+EXPORT_SYMBOL_GPL(pci_parent_bus_reset);
 
 static int pci_reset_hotplug_slot(struct hotplug_slot *hotplug, int probe)
 {
