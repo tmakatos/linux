@@ -10147,6 +10147,7 @@ void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 	vcpu->arch.ia32_xss = 0;
 
 	kvm_x86_ops.vcpu_reset(vcpu, init_event);
+	kvm_update_cpuid_runtime(vcpu);
 }
 
 void kvm_vcpu_deliver_sipi_vector(struct kvm_vcpu *vcpu, u8 vector)
