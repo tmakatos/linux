@@ -1658,7 +1658,11 @@ static struct page *alloc_buddy_huge_page(struct hstate *h,
 {
 	int order = huge_page_order(h);
 	struct page *page;
-	bool alloc_try_hard = true;
+
+	/*
+	 * ENG-69929: mm: Prevent long stalls when allocating hugepages
+	 */ 
+	bool alloc_try_hard = false;
 
 	/*
 	 * By default we always try hard to allocate the page with
