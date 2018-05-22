@@ -717,7 +717,7 @@ EXPORT_SYMBOL(zerocopy_sg_from_iter);
  *	@len: amount of data to copy from buffer to iovec
  *      @csump: checksum pointer
  */
-static int skb_copy_and_csum_datagram(const struct sk_buff *skb, int offset,
+int skb_copy_and_csum_datagram(const struct sk_buff *skb, int offset,
 				      struct iov_iter *to, int len,
 				      __wsum *csump)
 {
@@ -732,6 +732,7 @@ static int skb_copy_and_csum_datagram(const struct sk_buff *skb, int offset,
 	*csump = csdata.csum;
 	return 0;
 }
+EXPORT_SYMBOL_GPL(skb_copy_and_csum_datagram);
 
 /**
  *	skb_copy_and_csum_datagram_msg - Copy and checksum skb to user iovec.
