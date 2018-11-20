@@ -591,6 +591,8 @@ static inline int pci_enable_ptm(struct pci_dev *dev, u8 *granularity)
 struct pci_dev_reset_methods {
 	u16 vendor;
 	u16 device;
+	u16 subvendor;
+	u16 subdevice;
 	int (*reset)(struct pci_dev *dev, int probe);
 };
 
