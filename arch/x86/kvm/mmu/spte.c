@@ -105,7 +105,7 @@ int make_spte(struct kvm_vcpu *vcpu, unsigned int pte_access, int level,
 		spte |= spte_shadow_accessed_mask(spte);
 
 	if (level > PG_LEVEL_4K && (pte_access & ACC_EXEC_MASK) &&
-	    is_nx_huge_page_enabled()) {
+	    is_nx_huge_page_enabled(vcpu)) {
 		pte_access &= ~ACC_EXEC_MASK;
 	}
 

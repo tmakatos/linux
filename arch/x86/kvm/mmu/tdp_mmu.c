@@ -574,7 +574,7 @@ int kvm_tdp_mmu_map(struct kvm_vcpu *vcpu, gpa_t gpa, u32 error_code,
 		    int map_writable, int max_level, kvm_pfn_t pfn,
 		    bool prefault)
 {
-	bool nx_huge_page_workaround_enabled = is_nx_huge_page_enabled();
+	bool nx_huge_page_workaround_enabled = is_nx_huge_page_enabled(vcpu);
 	bool write = error_code & PFERR_WRITE_MASK;
 	bool exec = error_code & PFERR_FETCH_MASK;
 	bool huge_page_disallowed = exec && nx_huge_page_workaround_enabled;

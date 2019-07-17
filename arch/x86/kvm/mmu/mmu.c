@@ -207,9 +207,9 @@ void kvm_flush_remote_tlbs_with_address(struct kvm *kvm,
 	kvm_flush_remote_tlbs_with_range(kvm, &range);
 }
 
-bool is_nx_huge_page_enabled(void)
+bool is_nx_huge_page_enabled(struct kvm_vcpu *vcpu)
 {
-	return READ_ONCE(nx_huge_pages);
+	return READ_ONCE(nx_huge_pages) && !guest_cpuid_has(vcpu, X86_FEATURE_VMX);
 }
 
 static void mark_mmio_spte(struct kvm_vcpu *vcpu, u64 *sptep, u64 gfn,
@@ -2855,7 +2855,7 @@ static int __direct_map(struct kvm_vcpu *vcpu, gpa_t gpa, u32 error_code,
 			int map_writable, int max_level, kvm_pfn_t pfn,
 			bool prefault, bool is_tdp)
 {
-	bool nx_huge_page_workaround_enabled = is_nx_huge_page_enabled();
+	bool nx_huge_page_workaround_enabled = is_nx_huge_page_enabled(vcpu);
 	bool write = error_code & PFERR_WRITE_MASK;
 	bool exec = error_code & PFERR_FETCH_MASK;
 	bool huge_page_disallowed = exec && nx_huge_page_workaround_enabled;

@@ -629,7 +629,7 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, gpa_t addr,
 			 int max_level, kvm_pfn_t pfn, bool map_writable,
 			 bool prefault)
 {
-	bool nx_huge_page_workaround_enabled = is_nx_huge_page_enabled();
+	bool nx_huge_page_workaround_enabled = is_nx_huge_page_enabled(vcpu);
 	bool write_fault = error_code & PFERR_WRITE_MASK;
 	bool exec = error_code & PFERR_FETCH_MASK;
 	bool huge_page_disallowed = exec && nx_huge_page_workaround_enabled;
