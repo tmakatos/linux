@@ -3817,6 +3817,7 @@ static int reset_chelsio_generic_dev(struct pci_dev *dev, int probe)
 #define PCI_DEVICE_ID_LSI_LOGIC_SAS3508 0x00ae
 #define PCI_DEVICE_ID_LSI_LOGIC_SAS3516 0x00ab
 #define PCI_DEVICE_ID_LSI_LOGIC_SAS3108 0x005d
+#define PCI_DEVICE_ID_LSI_LOGIC_SAS38xx 0x00e6
 
 static int dummy_pci_reset(struct pci_dev *dev, int probe)
 {
@@ -3965,6 +3966,9 @@ static const struct pci_dev_reset_methods pci_dev_reset_methods[] = {
 		PCI_ANY_ID, PCI_ANY_ID,
 		pci_parent_bus_reset },
 	{ PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_LSI_LOGIC_SAS3516,
+		PCI_ANY_ID, PCI_ANY_ID,
+		pci_parent_bus_reset },
+	{ PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_LSI_LOGIC_SAS38xx,
 		PCI_ANY_ID, PCI_ANY_ID,
 		pci_parent_bus_reset },
 	{ PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_LSI_LOGIC_SAS3108,
