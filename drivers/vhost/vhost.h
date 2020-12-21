@@ -228,10 +228,10 @@ int vhost_init_device_iotlb(struct vhost_dev *d, bool enabled);
 void vhost_iotlb_map_free(struct vhost_iotlb *iotlb,
 			  struct vhost_iotlb_map *map);
 
-#define vq_err(vq, fmt, ...) do {                                  \
-		pr_debug(pr_fmt(fmt), ##__VA_ARGS__);       \
-		if ((vq)->error_ctx)                               \
-				eventfd_signal((vq)->error_ctx, 1);\
+#define vq_err(vq, fmt, ...) do {                                \
+		pr_warn_ratelimited(pr_fmt(fmt), ##__VA_ARGS__); \
+		if ((vq)->error_ctx)                             \
+			eventfd_signal((vq)->error_ctx, 1);      \
 	} while (0)
 
 enum {
