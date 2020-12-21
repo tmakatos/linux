@@ -1574,6 +1574,37 @@ static long vhost_vring_set_num_addr(struct vhost_dev *d,
 
 	return r;
 }
+
+/*
+ * Regardless of state, we expect a well-behaved guest to never have a delta
+ * between its avail ring index and our ->last_avail_idx larger than the ring
+ * size.
+ */
+static void check_avail_idx(struct vhost_virtqueue *vq, u32 idx)
+{
+	uint16_t guest_avail_idx;
+	uint16_t last_avail_idx;
+
+	if (vq->desc == NULL)
+		return;
+
+	last_avail_idx = vq->last_avail_idx;
+
+	if (unlikely(vhost_get_avail_idx(vq, &guest_avail_idx))) {
+		vq_err(vq, "Failed to access avail idx at %p\n",
+		       &vq->avail->idx);
+		return;
+	}
+
+	guest_avail_idx = vhost16_to_cpu(vq, guest_avail_idx);
+
+	if (unlikely((u16)(guest_avail_idx - last_avail_idx) > vq->num)) {
+		vq_err(vq, "VQ %u guest index %#hx inconsistent with vhost "
+		       "last_avail_idx %#hx (VQ size %u)\n", idx,
+		       guest_avail_idx, last_avail_idx, vq->num);
+	}
+}
+
 long vhost_vring_ioctl(struct vhost_dev *d, unsigned int ioctl, void __user *argp)
 {
 	struct file *eventfp, *filep = NULL;
@@ -1623,6 +1654,7 @@ long vhost_vring_ioctl(struct vhost_dev *d, unsigned int ioctl, void __user *arg
 		vq->avail_idx = vq->last_avail_idx;
 		break;
 	case VHOST_GET_VRING_BASE:
+		check_avail_idx(vq, idx);
 		s.index = idx;
 		s.num = vq->last_avail_idx;
 		if (copy_to_user(argp, &s, sizeof s))
