@@ -3950,6 +3950,9 @@ static const struct pci_dev_reset_methods pci_dev_reset_methods[] = {
 	{ PCI_VENDOR_ID_INTEL, 0x201d,
 		PCI_ANY_ID, PCI_ANY_ID,
 		pci_vmd_reset_quirk },
+	{ PCI_VENDOR_ID_INTEL, 0x28c0,
+		PCI_ANY_ID, PCI_ANY_ID,
+		pci_vmd_reset_quirk },
 	{ PCI_VENDOR_ID_CHELSIO, PCI_ANY_ID,
 		PCI_ANY_ID, PCI_ANY_ID,
 		reset_chelsio_generic_dev },
@@ -5653,15 +5656,16 @@ static int pci_vmd_reset_quirk(struct pci_dev *dev, int probe)
 	if (probe)
 		return 0;
 
-	// Just take care of VMD_V1 until we see VMD_V2!
-	if (dev->device != 0x201d) {
-		pci_err(dev, "Found 0x%x, not Purley generation VMD.\n",
-			dev->device);
-		return -ENOTTY;
-	}
-	is_vmd_v1 = true;
+	/*
+	 * Make sure to update shadow copy only for Purley generation.
+	 * With Whitley (and newer), shadow copy is updated by ASIC in MMIO
+	 * space.
+	 * For consistencies, we call it vmd_v1 across stack.
+	 */
+	if (dev->device == 0x201d)
+		is_vmd_v1 = true;
 
-	/* Enable mmio. Can't use pcim_enable_device() since it checkes
+	/* Enable mmio. Can't use pcim_enable_device() since it checks
 	 * for parent pointer to be set, which would be NULL during
 	 *. So better to get a layer down and access PCIe space
 	 * for VMD.
@@ -5688,16 +5692,26 @@ static int pci_vmd_reset_quirk(struct pci_dev *dev, int probe)
 		u32 val0 = readl(cfgbar + offset);
 		u16 const vid = val0 & 0xffff;
 		u16 const did = (val0 >> 16) & 0xffff;
+		bool const purley_rp = ((did >= 0x2030) && (did <= 0x2033));
+		bool const whitley_rp = ((did >= 0x347a) && (did <= 0x347d));
+
+		/*
+		 * This loop is only concerned about Intel devices. To avoid
+		 * checking of device in every condition, skip rest of the code
+		 * if "this" indirect device is NOT Intel.
+		 */
+		if (vid != PCI_VENDOR_ID_INTEL)
+			continue;
 
 		/*
 		 * Assumption is, combination of this vid and did shall be
 		 *    root port only.
-		 * Better way to to implment -
+		 * Better way to to implement -
 		 * 1. Make sure this is Type1 header.
 		 * 2. Find PCIExpress Capability structure (10h)
 		 * 3. Check if Device Type indeed is Rootport of RC (0100b)
 		 */
-		if ((vid == 0x8086) && ((did >= 0x2030) && (did <= 0x2033))) {
+		if (purley_rp || whitley_rp) {
 			u32 ctrl;
 
 			if (!enbld_rp_mask)
@@ -5706,19 +5720,19 @@ static int pci_vmd_reset_quirk(struct pci_dev *dev, int probe)
 			pci_info(dev, "SBR from VID:DID 0x%x:0x%x\n", vid, did);
 			enbld_rp_mask |= (1 << index);
 			index++;
-			ctrl = readl(cfgbar + PCI_BRIDGE_CONTROL);
+			ctrl = readl(cfgbar + offset + PCI_BRIDGE_CONTROL);
 			ctrl |= PCI_BRIDGE_CTL_BUS_RESET;
-			writel(ctrl, cfgbar + PCI_BRIDGE_CONTROL);
+			writel(ctrl, cfgbar + offset + PCI_BRIDGE_CONTROL);
 
 			/*
 			 * PCI spec v3.0 7.6.4.2 requires minimum Trst of 1ms.
 			 * Sleeping < 20 ms may sleep for 20 ms. Just using
-			 * 20 ms to have certainity of 20ms.
+			 * 20 ms to have certainty of 20ms.
 			 */
 			msleep(20);
 
 			ctrl &= ~PCI_BRIDGE_CTL_BUS_RESET;
-			writel(ctrl, cfgbar + PCI_BRIDGE_CONTROL);
+			writel(ctrl, cfgbar + offset + PCI_BRIDGE_CONTROL);
 		}
 	}
 
