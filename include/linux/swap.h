@@ -369,6 +369,7 @@ extern unsigned long mem_cgroup_shrink_node(struct mem_cgroup *mem,
 						unsigned long *nr_scanned);
 extern unsigned long shrink_all_memory(unsigned long nr_pages);
 extern int vm_swappiness;
+extern int vm_reclaim_anon_allowed;
 extern int remove_mapping(struct address_space *mapping, struct page *page);
 
 extern unsigned long reclaim_pages(struct list_head *page_list);

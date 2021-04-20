@@ -170,6 +170,15 @@ struct scan_control {
  * From 0 .. 200.  Higher means more swappy.
  */
 int vm_swappiness = 60;
+/*
+ * When disabled by default for Nutanix, disables global reclamation
+ * of anonymous memory from cgroups with swappiness set to zero.
+ *
+ * When enabled, it falls back to the upstream behaviour to
+ * swap anonymous memory even from the cgroups with swappiness
+ * set to zero under the global reclamation.
+ */
+int vm_reclaim_anon_allowed = 0;
 
 static void set_task_reclaim_state(struct task_struct *task,
 				   struct reclaim_state *rs)
@@ -2276,7 +2285,12 @@ static void get_scan_count(struct lruvec *lruvec, struct scan_control *sc,
 	 * If the system is almost out of file pages, force-scan anon.
 	 */
 	if (sc->file_is_tiny) {
-		scan_balance = SCAN_ANON;
+		/*
+		 * Still prevent reclaiming from the memory cgroups
+		 * with zero swappiness if not allowed to do so.
+		 */
+		scan_balance = (!swappiness && !vm_reclaim_anon_allowed) ?
+		               SCAN_FILE : SCAN_ANON;
 		goto out;
 	}
 

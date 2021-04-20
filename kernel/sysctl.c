@@ -2785,6 +2785,15 @@ static struct ctl_table vm_table[] = {
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= &two_hundred,
 	},
+	{
+		.procname	= "reclaim_anon_allowed",
+		.data		= &vm_reclaim_anon_allowed,
+		.maxlen		= sizeof(vm_reclaim_anon_allowed),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
 #ifdef CONFIG_HUGETLB_PAGE
 	{
 		.procname	= "nr_hugepages",
