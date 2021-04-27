@@ -396,9 +396,20 @@ config PPC_KUAP_DEBUG
 	  If you're unsure, say N.
 
 config ARCH_ENABLE_HUGEPAGE_MIGRATION
-	def_bool y
+	def_bool n
 	depends on PPC_BOOK3S_64 && HUGETLB_PAGE && MIGRATION
-
+	help
+	  Nutanix specific change from y to n (ENG-382475).
+	  PPC KVM uses CMA for hash page table(KVM_PPC_ALLOCATE_HTAB). The
+	  commit d6cb41cc44 ("mm, hugetlb: remove hugepages_treat_as_movable
+	  sysctl") made hugepages more likely allocated from CMA region. But
+	  cma_alloc() cannot migrate hugepages when needed to satisfy a real
+	  cma request even if a hugepage is actually movable, so if CMA region
+	  is occupied by hugepages then cma_alloc() can easily fail.
+	  The config change from y to n makes hugepages unmovable again.
+	  The upstream commit ae37c7ff79f1 ("Make alloc_contig_range handle
+	  Hugetlb pages") in 5.13 can solve the issue so if we have that commit
+	  in future, this config change can be reverted.
 
 config PPC_MMU_NOHASH
 	def_bool y
