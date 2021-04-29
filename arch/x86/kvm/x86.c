@@ -10700,19 +10700,13 @@ static void kvm_mmu_slot_apply_flags(struct kvm *kvm,
 		if (kvm_x86_ops.slot_enable_log_dirty) {
 			kvm_x86_ops.slot_enable_log_dirty(kvm, new);
 		} else {
-			int level =
-				kvm_dirty_log_manual_protect_and_init_set(kvm) ?
-				PG_LEVEL_2M : PG_LEVEL_4K;
-
 			/*
-			 * If we're with initial-all-set, we don't need
-			 * to write protect any small page because
-			 * they're reported as dirty already.  However
-			 * we still need to write-protect huge pages
-			 * so that the page split can happen lazily on
-			 * the first write to the huge page.
+			 * Initially-all-set does not require write protecting any page,
+			 * because they're all assumed to be dirty.
 			 */
-			kvm_mmu_slot_remove_write_access(kvm, new, level);
+			if (kvm_dirty_log_manual_protect_and_init_set(kvm))
+				return;
+			kvm_mmu_slot_remove_write_access(kvm, new, PG_LEVEL_4K);
 		}
 	} else {
 		if (kvm_x86_ops.slot_disable_log_dirty)
