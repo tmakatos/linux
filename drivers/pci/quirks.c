@@ -3925,6 +3925,8 @@ static int delay_250ms_after_flr(struct pci_dev *dev, int probe)
 	return 0;
 }
 
+static int pci_vmd_reset_quirk(struct pci_dev *dev, int probe);
+
 static const struct pci_dev_reset_methods pci_dev_reset_methods[] = {
 	{ PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82599_SFP_VF,
 		PCI_ANY_ID, PCI_ANY_ID,
@@ -3944,6 +3946,9 @@ static const struct pci_dev_reset_methods pci_dev_reset_methods[] = {
 	{ PCI_VENDOR_ID_INTEL, 0x0a54,
 		PCI_ANY_ID, PCI_ANY_ID,
 		delay_250ms_after_flr },
+	{ PCI_VENDOR_ID_INTEL, 0x201d,
+		PCI_ANY_ID, PCI_ANY_ID,
+		pci_vmd_reset_quirk },
 	{ PCI_VENDOR_ID_CHELSIO, PCI_ANY_ID,
 		PCI_ANY_ID, PCI_ANY_ID,
 		reset_chelsio_generic_dev },
@@ -5606,6 +5611,155 @@ out_disable:
 DECLARE_PCI_FIXUP_CLASS_FINAL(PCI_VENDOR_ID_NVIDIA, 0x13b1,
 			      PCI_CLASS_DISPLAY_VGA, 8,
 			      quirk_reset_lenovo_thinkpad_p50_nvgpu);
+
+/**
+ * Intel VMD makes root port access as indirect access for whatever is enabled.
+ * That means - during reset, need to:
+ * Step-1 Starting at OFFSET = 0, Find the root port under VMD.
+ *        Take the VMD BAR 0/1 and read VMD BAR0 + OFFSET.
+ *        Issue a memory32 read to this address. Returned value is
+ *          either 0, -1 or a valid vendor_device_id(8086-2030
+ *          for vmd root port).
+ *        For each root port found(dev id 0x2030, 0x2031, 0x2032, 0x2033),
+ *          set bridge control register bit 0->1->0 to reset the downstream.
+ *          Wait a sec or more for the reset to take effect.
+ *        Increment OFFSET to the next device(32k) and add to VMD BAR0 and
+ *          repeat until all devices are found.
+ * Step-2 After bus reset loop completes, write VMD BAR2 value to lowest
+ *        root port prefetchable memory base.
+ * Step-3 Write VMD BAR 3 to lowest root port prefetchable upper32 memorybase.
+ * Step-4 Write VMD bar 2/3 size to lowest root port prefetchable limit
+ *        register.
+ **/
+
+static int pci_vmd_reset_quirk(struct pci_dev *dev, int probe)
+{
+	void __iomem *cfgbar;
+	u16 cmd, old_cmd;
+	u32 index;
+	u8 enbld_rp_mask = 0x0;
+	resource_size_t ea_dev_window = (1 << 15);
+	resource_size_t bar_size = 0;
+	resource_size_t offset;
+	void __iomem *rp_cache_addr;
+	bool is_vmd_v1 = false;
+
+	pci_info(dev, "VMD Reset Quirk Found\n");
+
+	if (probe)
+		return 0;
+
+	// Just take care of VMD_V1 until we see VMD_V2!
+	if (dev->device != 0x201d) {
+		pci_err(dev, "Found 0x%x, not Purley generation VMD.\n",
+			dev->device);
+		return -ENOTTY;
+	}
+	is_vmd_v1 = true;
+
+	/* Enable mmio. Can't use pcim_enable_device() since it checkes
+	 * for parent pointer to be set, which would be NULL during
+	 *. So better to get a layer down and access PCIe space
+	 * for VMD.
+	 */
+	pci_read_config_word(dev, PCI_COMMAND, &cmd);
+	old_cmd = cmd;
+	cmd |= PCI_COMMAND_MEMORY;
+	pci_write_config_word(dev, PCI_COMMAND, cmd);
+
+	cfgbar = pci_iomap(dev, 0, 0);
+	if (!cfgbar) {
+		pci_err(dev, "VMD pci_iomap failed.\n");
+		pci_write_config_word(dev, PCI_COMMAND, old_cmd);
+		return -ENOMEM;
+	}
+	bar_size = pci_resource_len(dev, 0);
+
+	/*
+	 * Reset all root ports enabled for VMD.
+	 */
+	for (offset = 0, index = 0;
+			offset < bar_size;
+			offset += ea_dev_window) {
+		u32 val0 = readl(cfgbar + offset);
+		u16 const vid = val0 & 0xffff;
+		u16 const did = (val0 >> 16) & 0xffff;
+
+		/*
+		 * Assumption is, combination of this vid and did shall be
+		 *    root port only.
+		 * Better way to to implment -
+		 * 1. Make sure this is Type1 header.
+		 * 2. Find PCIExpress Capability structure (10h)
+		 * 3. Check if Device Type indeed is Rootport of RC (0100b)
+		 */
+		if ((vid == 0x8086) && ((did >= 0x2030) && (did <= 0x2033))) {
+			u32 ctrl;
+
+			if (!enbld_rp_mask)
+				rp_cache_addr = cfgbar + offset;
+
+			pci_info(dev, "SBR from VID:DID 0x%x:0x%x\n", vid, did);
+			enbld_rp_mask |= (1 << index);
+			index++;
+			ctrl = readl(cfgbar + PCI_BRIDGE_CONTROL);
+			ctrl |= PCI_BRIDGE_CTL_BUS_RESET;
+			writel(ctrl, cfgbar + PCI_BRIDGE_CONTROL);
+
+			/*
+			 * PCI spec v3.0 7.6.4.2 requires minimum Trst of 1ms.
+			 * Sleeping < 20 ms may sleep for 20 ms. Just using
+			 * 20 ms to have certainity of 20ms.
+			 */
+			msleep(20);
+
+			ctrl &= ~PCI_BRIDGE_CTL_BUS_RESET;
+			writel(ctrl, cfgbar + PCI_BRIDGE_CONTROL);
+		}
+	}
+
+	if (!enbld_rp_mask) {
+		pci_info(dev, "No Rootport managed by VMD.\n");
+	} else {
+
+		/*
+		 * For conventional PCI is 2^25 clock cycles.
+		 * Assuming a minimum 33MHz clock this results in a 1s
+		 * delay before we can consider subordinate devices to
+		 * be re-initialized.  PCIe has some ways to shorten this,
+		 * but we don't make use of them yet.
+		 */
+		ssleep(1);
+	}
+
+	if (enbld_rp_mask && is_vmd_v1) {
+		u32 _tmpHolder;
+		u32 _data32;
+
+		// Now this is VMD_1 quirk (required only for 1st enabled RP)!
+		// Step-2 to Step-4...
+		_data32 = (dev->resource[2].start >> 16) & 0xfff0;
+		_tmpHolder = (dev->resource[2].end >> 16) & 0xfff0;
+		_data32 = _data32 | (_tmpHolder << 16);
+		writel(_data32, rp_cache_addr + PCI_MEMORY_BASE);
+
+		_data32 = (dev->resource[4].start >> 16) & 0xfff0;
+		_tmpHolder = (dev->resource[4].end >> 16) & 0xfff0;
+		_data32 = _data32 | (_tmpHolder << 16);
+		writel(_data32, rp_cache_addr + PCI_PREF_MEMORY_BASE);
+
+		_data32 = (dev->resource[4].start >> 32);
+		writel(_data32, rp_cache_addr + PCI_PREF_BASE_UPPER32);
+		pci_info(dev, "Shadow copy updated.\n");
+	}
+
+
+	pci_write_config_word(dev, PCI_COMMAND, old_cmd);
+	pci_iounmap(dev, cfgbar);
+
+	pci_info(dev, "VMD Reset Quirk Successful.\n");
+	return 0;
+}
 
 /*
  * Device [1b21:2142]
