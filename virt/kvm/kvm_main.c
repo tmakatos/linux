@@ -2796,6 +2796,7 @@ void kvm_vcpu_block(struct kvm_vcpu *vcpu)
 					++vcpu->stat.halt_poll_invalid;
 				goto out;
 			}
+			cpu_relax();
 			poll_end = cur = ktime_get();
 		} while (single_task_running() && !need_resched() &&
 			 ktime_before(cur, stop));
