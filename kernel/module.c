@@ -90,7 +90,6 @@
 DEFINE_MUTEX(module_mutex);
 EXPORT_SYMBOL_GPL(module_mutex);
 static LIST_HEAD(modules);
-static bool whitelisted(const char *module_name);
 
 /* Work queue for freeing init sections in success case */
 static void do_free_init(struct work_struct *w);
@@ -2940,7 +2939,7 @@ static int module_sig_check(struct load_info *info, int flags)
 		return err;
 	}
 
-	if (is_module_sig_enforced() && !whitelisted(info->name)) {
+	if (is_module_sig_enforced()) {
 		pr_notice("Loading of %s is rejected\n", reason);
 		return -EKEYREJECTED;
 	}
@@ -3548,33 +3547,6 @@ static bool blacklisted(const char *module_name)
 	return false;
 }
 core_param(module_blacklist, module_blacklist, charp, 0400);
-
-int module_whitelist_disabled = 0;
-core_param(module_whitelist_disabled, module_whitelist_disabled, int, 0);
-static char *module_whitelist = "nvidia,nvidia_vgpu_vfio";
-static bool whitelisted(const char *module_name)
-{
-	const char *p;
-	size_t len;
-
-	if (module_whitelist_disabled) {
-		pr_notice_once("Module whitelist disabled\n");
-		return false;
-	}
-
-	if (!module_whitelist)
-		return false;
-
-	for (p = module_whitelist; *p; p += len) {
-		len = strcspn(p, ",");
-		if (strlen(module_name) == len && !memcmp(module_name, p, len)) {
-			return true;
-		}
-		if (p[len] == ',')
-			len++;
-	}
-	return false;
-}
 
 static struct module *layout_and_allocate(struct load_info *info, int flags)
 {
