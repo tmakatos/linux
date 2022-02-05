@@ -9151,10 +9151,26 @@ static inline int vcpu_block(struct kvm *kvm, struct kvm_vcpu *vcpu)
 	return 1;
 }
 
-static inline bool kvm_vcpu_running(struct kvm_vcpu *vcpu)
+static inline bool kvm_vcpu_running(struct kvm_vcpu *vcpu, bool acquire_srcu)
 {
-	if (is_guest_mode(vcpu))
-		kvm_x86_ops.nested_ops->check_events(vcpu);
+	if (is_guest_mode(vcpu)) {
+		if (acquire_srcu) {
+			/*
+			 * We need to lock because check_nested_events could call
+			 * nested_vmx_vmexit(). That in turn would eventually call
+			 * fast_cr3_switch(), which needs the kvm->srcu in order to
+			 * verify (via mmu_check_root) that the new CR3 belongs to
+			 * a valid memslot. We will have this lock only when called
+			 * from vcpu_run but not when called from kvm_vcpu_check_block >
+			 * kvm_arch_vcpu_runnable.
+			 */
+			int idx = srcu_read_lock(&vcpu->kvm->srcu);
+			kvm_x86_ops.nested_ops->check_events(vcpu);
+			srcu_read_unlock(&vcpu->kvm->srcu, idx);
+		} else {
+			kvm_x86_ops.nested_ops->check_events(vcpu);
+		}
+	}
 
 	return (vcpu->arch.mp_state == KVM_MP_STATE_RUNNABLE &&
 		!vcpu->arch.apf.halted);
@@ -9169,7 +9185,7 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 	vcpu->arch.l1tf_flush_l1d = true;
 
 	for (;;) {
-		if (kvm_vcpu_running(vcpu)) {
+		if (kvm_vcpu_running(vcpu, false)) {
 			r = vcpu_enter_guest(vcpu);
 		} else {
 			r = vcpu_block(kvm, vcpu);
@@ -10794,7 +10810,7 @@ static inline bool kvm_vcpu_has_events(struct kvm_vcpu *vcpu)
 
 int kvm_arch_vcpu_runnable(struct kvm_vcpu *vcpu)
 {
-	return kvm_vcpu_running(vcpu) || kvm_vcpu_has_events(vcpu);
+	return kvm_vcpu_running(vcpu, true) || kvm_vcpu_has_events(vcpu);
 }
 
 bool kvm_arch_dy_runnable(struct kvm_vcpu *vcpu)

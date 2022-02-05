@@ -2742,22 +2742,16 @@ static void shrink_halt_poll_ns(struct kvm_vcpu *vcpu)
 
 static int kvm_vcpu_check_block(struct kvm_vcpu *vcpu)
 {
-	int ret = -EINTR;
-	int idx = srcu_read_lock(&vcpu->kvm->srcu);
-
 	if (kvm_arch_vcpu_runnable(vcpu)) {
 		kvm_make_request(KVM_REQ_UNHALT, vcpu);
-		goto out;
+		return -EINTR;
 	}
 	if (kvm_cpu_has_pending_timer(vcpu))
-		goto out;
+		return -EINTR;
 	if (signal_pending(current))
-		goto out;
+		return -EINTR;
 
-	ret = 0;
-out:
-	srcu_read_unlock(&vcpu->kvm->srcu, idx);
-	return ret;
+	return 0;
 }
 
 static inline void
