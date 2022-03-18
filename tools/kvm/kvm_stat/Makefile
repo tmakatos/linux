@@ -18,11 +18,12 @@ ifneq ($(findstring $(MAKEFLAGS),s),s)
   endif
 endif
 
+%.1: DATE=$(shell date -d @$(SOURCE_DATE_EPOCH) '+%m/%d/%Y')
 %.1: %.txt
 ifeq ($(a2x_path),)
 	$(error "You need to install asciidoc for man pages")
 else
-	$(QUIET_A2X)$(A2X) --doctype manpage --format manpage $<
+	$(QUIET_A2X)$(A2X) --doctype manpage --format manpage --attribute date=$(DATE) $<
 endif
 
 clean:
