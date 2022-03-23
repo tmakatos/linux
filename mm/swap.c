@@ -579,15 +579,18 @@ static void lru_deactivate_fn(struct page *page, struct lruvec *lruvec,
 	if (PageLRU(page) && !PageUnevictable(page)) {
 		int lru = page_lru_base_type(page);
 		int nr_pages = thp_nr_pages(page);
+		bool active = PageActive(page);
 
-		del_page_from_lru_list(page, lruvec, lru + LRU_ACTIVE);
+		del_page_from_lru_list(page, lruvec, lru + active);
 		ClearPageActive(page);
 		ClearPageReferenced(page);
 		add_page_to_lru_list_tail(page, lruvec, lru);
 
-		__count_vm_events(PGDEACTIVATE, nr_pages);
-		__count_memcg_events(lruvec_memcg(lruvec), PGDEACTIVATE,
-				     nr_pages);
+		if (active) {
+			__count_vm_events(PGDEACTIVATE, nr_pages);
+			__count_memcg_events(lruvec_memcg(lruvec), PGDEACTIVATE,
+					     nr_pages);
+		}
 	}
 }
 
@@ -688,9 +691,8 @@ void deactivate_file_page(struct page *page)
  * deactivate_page - deactivate a page
  * @page: page to deactivate
  *
- * deactivate_page() moves @page to the inactive list if @page was on the active
- * list and was not an unevictable page.  This is done to accelerate the reclaim
- * of @page.
+ * deactivate_page() moves @page to the tail of the inactive list if @page was
+ * not an unevictable page.  This is done to accelerate the reclaim of @page.
  */
 void deactivate_page(struct page *page)
 {
