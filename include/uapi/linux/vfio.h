@@ -593,6 +593,24 @@ struct vfio_region_gfx_edid {
  * same transaction size at the source.
  */
 
+#ifdef QEMU_42_COMPAT_MIGRATION
+
+struct vfio_device_migration_info {
+        __u32 device_state;         /* VFIO device state */
+#define VFIO_DEVICE_STATE_RUNNING   (1 << 0)
+#define VFIO_DEVICE_STATE_SAVING    (1 << 1)
+        __u32 reserved;
+        __u64 pending_bytes;
+        __u64 data_offset;
+        __u64 data_size;
+        __u64 start_pfn;
+        __u64 page_size;
+        __u64 total_pfns;
+        __u64 copied_pfns;
+} __attribute__((packed));
+
+#else
+
 struct vfio_device_migration_info {
 	__u32 device_state;         /* VFIO device state */
 #define VFIO_DEVICE_STATE_STOP      (0)
@@ -620,6 +638,8 @@ struct vfio_device_migration_info {
 	__u64 data_offset;
 	__u64 data_size;
 };
+
+#endif
 
 /*
  * The MSIX mappable capability informs that MSIX data of a BAR can be mmapped
