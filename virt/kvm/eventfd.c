@@ -663,6 +663,8 @@ struct _ioeventfd {
 	struct kvm_io_device dev;
 	u8                   bus_idx;
 	bool                 wildcard;
+	bool                 commit_write;
+	void                 *vaddr;
 };
 
 static inline struct _ioeventfd *
@@ -731,9 +733,27 @@ ioeventfd_write(struct kvm_vcpu *vcpu, struct kvm_io_device *this, gpa_t addr,
 {
 	struct _ioeventfd *p = to_ioeventfd(this);
 
-	if (!ioeventfd_in_range(p, addr, len, val))
+	if (!ioeventfd_in_range(p, addr, len, val)) {
+		pr_alert("XXX bad range");
 		return -EOPNOTSUPP;
+	}
 
+	if (p->commit_write) {
+		int ret;
+		uint64_t _val;
+		switch (len) {
+			case 1: _val = *(uint8_t*)val; break;
+			case 2: _val = *(uint16_t*)val; break;
+			case 4: _val = *(uint32_t*)val; break;
+			case 8: _val = *(uint64_t*)val; break;
+			default:
+				pr_err("XXX bad size");
+				break;
+		}
+		WARN_ON(p->length != sizeof(uint32_t));
+		ret = copy_to_user(p->vaddr + addr - p->addr, val, len);
+		WARN_ON(ret);
+	}
 	eventfd_signal(p->eventfd, 1);
 	return 0;
 }
@@ -792,8 +812,10 @@ static int kvm_assign_ioeventfd_idx(struct kvm *kvm,
 	int ret;
 
 	eventfd = eventfd_ctx_fdget(args->fd);
-	if (IS_ERR(eventfd))
+	if (IS_ERR(eventfd)) {
+		pr_err("XXX eventfd_ctx_fdget\n");
 		return PTR_ERR(eventfd);
+	}
 
 	p = kzalloc(sizeof(*p), GFP_KERNEL_ACCOUNT);
 	if (!p) {
@@ -813,10 +835,14 @@ static int kvm_assign_ioeventfd_idx(struct kvm *kvm,
 	else
 		p->wildcard = true;
 
+	p->commit_write = args->flags & KVM_IOEVENTFD_FLAG_COMMIT_WRITE;
+	p->vaddr = (void*)args->vaddr;
+
 	mutex_lock(&kvm->slots_lock);
 
 	/* Verify that there isn't a match already */
 	if (ioeventfd_check_collision(kvm, p)) {
+		pr_err(KERN_INFO "XXX collision\n");
 		ret = -EEXIST;
 		goto unlock_fail;
 	}
@@ -825,13 +851,20 @@ static int kvm_assign_ioeventfd_idx(struct kvm *kvm,
 
 	ret = kvm_io_bus_register_dev(kvm, bus_idx, p->addr, p->length,
 				      &p->dev);
-	if (ret < 0)
+	if (ret < 0) {
+		pr_err(KERN_INFO "XXX kvm_io_bus_register_dev\n");
 		goto unlock_fail;
+	}
 
 	kvm_get_bus(kvm, bus_idx)->ioeventfd_count++;
 	list_add_tail(&p->list, &kvm->ioeventfds);
 
 	mutex_unlock(&kvm->slots_lock);
+
+	if (p->commit_write) {
+		pr_info("XXX config ioeventfd with COMMIT_WRITE %#llx-%#llx\n",
+		        p->addr, p->addr + p->length);
+	}
 
 	return 0;
 
@@ -922,16 +955,22 @@ kvm_assign_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args)
 	}
 
 	/* check for range overflow */
-	if (args->addr + args->len < args->addr)
+	if (args->addr + args->len < args->addr) {
+		pr_alert("XXX bad range %#llx-%#llx\n", args->addr, args->addr + args->len);
 		return -EINVAL;
+	}
 
 	/* check for extra flags that we don't understand */
-	if (args->flags & ~KVM_IOEVENTFD_VALID_FLAG_MASK)
+	if (args->flags & ~KVM_IOEVENTFD_VALID_FLAG_MASK) {
+		pr_alert("XXX bad flags\n");
 		return -EINVAL;
+	}
 
 	/* ioeventfd with no length can't be combined with DATAMATCH */
-	if (!args->len && (args->flags & KVM_IOEVENTFD_FLAG_DATAMATCH))
+	if (!args->len && (args->flags & KVM_IOEVENTFD_FLAG_DATAMATCH)) {
+		pr_alert("XXX bad datamatch\n");
 		return -EINVAL;
+	}
 
 	ret = kvm_assign_ioeventfd_idx(kvm, bus_idx, args);
 	if (ret)
