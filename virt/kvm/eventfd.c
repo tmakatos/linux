@@ -682,6 +682,8 @@ struct _ioeventfd {
 	struct kvm_io_device dev;
 	u8                   bus_idx;
 	bool                 wildcard;
+	bool                 commit_write;
+	void                 *vaddr;
 };
 
 static inline struct _ioeventfd *
@@ -753,6 +755,10 @@ ioeventfd_write(struct kvm_vcpu *vcpu, struct kvm_io_device *this, gpa_t addr,
 	if (!ioeventfd_in_range(p, addr, len, val))
 		return -EOPNOTSUPP;
 
+	if (p->commit_write) {
+		if (unlikely(copy_to_user(p->vaddr, val, len)))
+			return -EFAULT;
+	}
 	eventfd_signal(p->eventfd, 1);
 	return 0;
 }
@@ -831,6 +837,9 @@ static int kvm_assign_ioeventfd_idx(struct kvm *kvm,
 		p->datamatch = args->datamatch;
 	else
 		p->wildcard = true;
+
+	p->commit_write = args->flags & KVM_IOEVENTFD_FLAG_COMMIT_WRITE;
+	p->vaddr = args->vaddr;
 
 	mutex_lock(&kvm->slots_lock);
 
