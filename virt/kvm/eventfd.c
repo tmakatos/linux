@@ -706,7 +706,8 @@ to_ioeventfd(struct kvm_io_device *dev)
 static void
 ioeventfd_release(struct _ioeventfd *p)
 {
-	eventfd_ctx_put(p->eventfd);
+	if (p->eventfd != NULL)
+		eventfd_ctx_put(p->eventfd);
 	list_del(&p->list);
 	kfree(p);
 }
@@ -770,7 +771,9 @@ ioeventfd_write(struct kvm_vcpu *vcpu, struct kvm_io_device *this, gpa_t addr,
 		if (unlikely(copy_to_user(p->vaddr, val, len)))
 			return -EFAULT;
 	}
-	eventfd_signal(p->eventfd);
+	if (p->eventfd != NULL) {
+		eventfd_signal(p->eventfd);
+	}
 	return 0;
 }
 
@@ -823,13 +826,9 @@ static int kvm_assign_ioeventfd_idx(struct kvm *kvm,
 				struct kvm_ioeventfd *args)
 {
 
-	struct eventfd_ctx *eventfd;
+	struct eventfd_ctx *eventfd = NULL;
 	struct _ioeventfd *p;
 	int ret;
-
-	eventfd = eventfd_ctx_fdget(args->fd);
-	if (IS_ERR(eventfd))
-		return PTR_ERR(eventfd);
 
 	p = kzalloc(sizeof(*p), GFP_KERNEL_ACCOUNT);
 	if (!p) {
@@ -841,7 +840,6 @@ static int kvm_assign_ioeventfd_idx(struct kvm *kvm,
 	p->addr    = args->addr;
 	p->bus_idx = bus_idx;
 	p->length  = args->len;
-	p->eventfd = eventfd;
 
 	/* The datamatch feature is optional, otherwise this is a wildcard */
 	if (args->flags & KVM_IOEVENTFD_FLAG_DATAMATCH)
@@ -851,6 +849,16 @@ static int kvm_assign_ioeventfd_idx(struct kvm *kvm,
 
 	p->commit_write = args->flags & KVM_IOEVENTFD_FLAG_COMMIT_WRITE;
 	p->vaddr = (void *)args->vaddr;
+
+	if (args->fd != -1) {
+		eventfd = eventfd_ctx_fdget(args->fd);
+		if (IS_ERR(eventfd)) {
+			ret = PTR_ERR(eventfd);
+			eventfd = NULL;
+			goto fail;
+		}
+	}
+	p->eventfd = eventfd;
 
 	mutex_lock(&kvm->slots_lock);
 
@@ -879,7 +887,9 @@ unlock_fail:
 	kfree(p);
 
 fail:
-	eventfd_ctx_put(eventfd);
+	kfree(p);
+	if (eventfd != NULL)
+		eventfd_ctx_put(eventfd);
 
 	return ret;
 }
@@ -889,14 +899,16 @@ kvm_deassign_ioeventfd_idx(struct kvm *kvm, enum kvm_bus bus_idx,
 			   struct kvm_ioeventfd *args)
 {
 	struct _ioeventfd        *p;
-	struct eventfd_ctx       *eventfd;
+	struct eventfd_ctx       *eventfd = NULL;
 	struct kvm_io_bus	 *bus;
 	int                       ret = -ENOENT;
 	bool                      wildcard;
 
-	eventfd = eventfd_ctx_fdget(args->fd);
-	if (IS_ERR(eventfd))
-		return PTR_ERR(eventfd);
+	if (args->fd != -1) {
+		eventfd = eventfd_ctx_fdget(args->fd);
+		if (IS_ERR(eventfd))
+			return PTR_ERR(eventfd);
+	}
 
 	wildcard = !(args->flags & KVM_IOEVENTFD_FLAG_DATAMATCH);
 
@@ -923,7 +935,8 @@ kvm_deassign_ioeventfd_idx(struct kvm *kvm, enum kvm_bus bus_idx,
 
 	mutex_unlock(&kvm->slots_lock);
 
-	eventfd_ctx_put(eventfd);
+	if (eventfd != NULL)
+		eventfd_ctx_put(eventfd);
 
 	return ret;
 }
