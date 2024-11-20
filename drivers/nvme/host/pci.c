@@ -214,7 +214,8 @@ struct nvme_queue {
 	__le32 *dbbuf_sq_ei;
 	__le32 *dbbuf_cq_ei;
 	struct completion delete_done;
-   atomic_t outstanding;
+	atomic64_t submitted;
+	atomic_t outstanding;
 };
 
 /*
@@ -472,10 +473,6 @@ static int nvme_pci_map_queues(struct blk_mq_tag_set *set)
  */
 static inline void nvme_write_sq_db(struct nvme_queue *nvmeq, bool write_sq)
 {
-    bool need_kick;
-    u16 submitted;
-    int new_outstanding;
-
 	if (!write_sq) {
 		u16 next_tail = nvmeq->sq_tail + 1;
 
@@ -485,29 +482,23 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq, bool write_sq)
 			return;
 	}
 
-    if (nvmeq->sq_tail > nvmeq->last_sq_tail) {
-       submitted += nvmeq->sq_tail - nvmeq->last_sq_tail;
-    } else {
-       submitted += nvmeq->sq_tail + nvmeq->q_depth - nvmeq->last_sq_tail;
-    }
-    new_outstanding = atomic_add_return(submitted, &nvmeq->outstanding);
-    if (unlikely(new_outstanding > nvmeq->q_depth)) {
-        dev_warn(nvmeq->dev->ctrl.device,
-                "XXX qid=%hu submitted=%d outstanding=%d too many=%d (old_tail=%hu new_tail=%hu)\n",
-                nvmeq->qid, submitted, new_outstanding, new_outstanding > nvmeq->q_depth, nvmeq->last_sq_tail, nvmeq->sq_tail);
-    }
-
-    need_kick = nvme_dbbuf_update_and_check_event(nvmeq->sq_tail,
-			nvmeq->dbbuf_sq_db, nvmeq->dbbuf_sq_ei);
+	if (nvme_dbbuf_update_and_check_event(nvmeq->sq_tail,
+	                nvmeq->dbbuf_sq_db, nvmeq->dbbuf_sq_ei))
+		writel(nvmeq->sq_tail, nvmeq->q_db);
 	nvmeq->last_sq_tail = nvmeq->sq_tail;
-	if (need_kick) {
-    		writel(nvmeq->sq_tail, nvmeq->q_db);
-    }
 }
 
 static inline void nvme_sq_copy_cmd(struct nvme_queue *nvmeq,
 				    struct nvme_command *cmd)
 {
+	int new_outstanding = atomic_inc_return(&nvmeq->outstanding);
+	if (unlikely(new_outstanding > nvmeq->q_depth)) {
+		dev_warn(nvmeq->dev->ctrl.device,
+				"thanos qid=%hu too many outstanding=%d\n",
+				nvmeq->qid, new_outstanding);
+	}
+	atomic64_inc(&nvmeq->submitted);
+
 	memcpy(nvmeq->sq_cmds + (nvmeq->sq_tail << nvmeq->sqes),
 		absolute_pointer(cmd), sizeof(*cmd));
 	if (++nvmeq->sq_tail == nvmeq->q_depth)
@@ -1052,9 +1043,22 @@ static inline void nvme_update_cq_head(struct nvme_queue *nvmeq)
 static inline int nvme_process_cq(struct nvme_queue *nvmeq)
 {
 	int found = 0;
+	int64_t old_submitted = atomic64_read(&nvmeq->submitted);
+	int64_t new_submitted;
+	int new_outstanding;
+	u16 orig_sq_tail = nvmeq->sq_tail;
 
 	while (nvme_cqe_pending(nvmeq)) {
 		found++;
+
+		// TODO could be moved into one of the two functions below?
+		new_outstanding = atomic_dec_return(&nvmeq->outstanding);
+		if (unlikely(new_outstanding < 0)) {
+			dev_warn(nvmeq->dev->ctrl.device,
+					"thanos qid=%hu completed too many outstanding=%d",
+					nvmeq->qid, new_outstanding);
+		}
+
 		/*
 		 * load-load control dependency between phase and the rest of
 		 * the cqe requires a full read memory barrier
@@ -1064,13 +1068,16 @@ static inline int nvme_process_cq(struct nvme_queue *nvmeq)
 		nvme_update_cq_head(nvmeq);
 	}
 
+	new_submitted = atomic64_read(&nvmeq->submitted);
+	if (new_submitted > old_submitted) {
+		dev_warn(nvmeq->dev->ctrl.device,
+				"thanos qid=%hu submitted %lld while completing, outstanding=%d, old sq_tail=%hu, new sq_tail=%hu",
+				nvmeq->qid, new_submitted - old_submitted, atomic_read(&nvmeq->outstanding), orig_sq_tail, nvmeq->sq_tail);
+	}
+
 	if (found) {
-        int new_outstanding = atomic_sub_return(found, &nvmeq->outstanding);
-        if (unlikely(new_outstanding < 0)) {
-            dev_warn(nvmeq->dev->ctrl.device, "XXX qid=%hu completed=%d outstanding=%d too many=%d", nvmeq->qid, found, new_outstanding, new_outstanding < 0);
-        }
 		nvme_ring_cq_doorbell(nvmeq);
-    }
+	}
 	return found;
 }
 
@@ -1546,7 +1553,8 @@ static int nvme_alloc_queue(struct nvme_dev *dev, int qid, int depth)
 	nvmeq->cq_phase = 1;
 	nvmeq->q_db = &dev->dbs[qid * 2 * dev->db_stride];
 	nvmeq->qid = qid;
-    atomic_set(&nvmeq->outstanding, 0);
+	atomic64_set(&nvmeq->submitted, 0);
+	atomic_set(&nvmeq->outstanding, 0);
 	dev->ctrl.queue_count++;
 
 	return 0;
@@ -2265,7 +2273,7 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 		nvme_suspend_io_queues(dev);
 		goto retry;
 	}
-	dev_info(dev->ctrl.device, "XXX thanos %d/%d/%d default/read/poll queues\n",
+	dev_info(dev->ctrl.device, "thanos v4 %d/%d/%d default/read/poll queues\n",
 					dev->io_queues[HCTX_TYPE_DEFAULT],
 					dev->io_queues[HCTX_TYPE_READ],
 					dev->io_queues[HCTX_TYPE_POLL]);
