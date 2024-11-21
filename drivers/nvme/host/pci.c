@@ -216,6 +216,8 @@ struct nvme_queue {
 	struct completion delete_done;
 	atomic64_t submitted;
 	atomic_t outstanding;
+	atomic_t in_process_cq;
+	atomic_t found;
 };
 
 /*
@@ -488,10 +490,15 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq, bool write_sq)
 	nvmeq->last_sq_tail = nvmeq->sq_tail;
 }
 
-static inline void nvme_sq_copy_cmd(struct nvme_queue *nvmeq,
+static void noinline nvme_sq_copy_cmd(struct nvme_queue *nvmeq,
 				    struct nvme_command *cmd)
 {
 	int new_outstanding = atomic_inc_return(&nvmeq->outstanding);
+
+	WARN(atomic_read(&nvmeq->in_process_cq),
+		 "submitting while completing, found=%d",
+		 atomic_read(&nvmeq->found));
+
 	if (unlikely(new_outstanding > nvmeq->q_depth)) {
 		dev_warn(nvmeq->dev->ctrl.device,
 				"thanos qid=%hu too many outstanding=%d\n",
@@ -1040,16 +1047,18 @@ static inline void nvme_update_cq_head(struct nvme_queue *nvmeq)
 	}
 }
 
-static inline int nvme_process_cq(struct nvme_queue *nvmeq)
+static int noinline nvme_process_cq(struct nvme_queue *nvmeq)
 {
-	int found = 0;
+	int found;
 	int64_t old_submitted = atomic64_read(&nvmeq->submitted);
 	int64_t new_submitted;
 	int new_outstanding;
 	u16 orig_sq_tail = nvmeq->sq_tail;
 
+	atomic_set(&nvmeq->in_process_cq, 1);
+
 	while (nvme_cqe_pending(nvmeq)) {
-		found++;
+		atomic_inc(&nvmeq->found);
 
 		// TODO could be moved into one of the two functions below?
 		new_outstanding = atomic_dec_return(&nvmeq->outstanding);
@@ -1068,6 +1077,8 @@ static inline int nvme_process_cq(struct nvme_queue *nvmeq)
 		nvme_update_cq_head(nvmeq);
 	}
 
+	atomic_set(&nvmeq->in_process_cq, 0);
+
 	new_submitted = atomic64_read(&nvmeq->submitted);
 	if (new_submitted > old_submitted) {
 		dev_warn(nvmeq->dev->ctrl.device,
@@ -1075,6 +1086,7 @@ static inline int nvme_process_cq(struct nvme_queue *nvmeq)
 				nvmeq->qid, new_submitted - old_submitted, atomic_read(&nvmeq->outstanding), orig_sq_tail, nvmeq->sq_tail);
 	}
 
+	found = atomic_xchg(&nvmeq->found, 0);
 	if (found) {
 		nvme_ring_cq_doorbell(nvmeq);
 	}
@@ -1555,6 +1567,8 @@ static int nvme_alloc_queue(struct nvme_dev *dev, int qid, int depth)
 	nvmeq->qid = qid;
 	atomic64_set(&nvmeq->submitted, 0);
 	atomic_set(&nvmeq->outstanding, 0);
+	atomic_set(&nvmeq->in_process_cq, 0);
+	atomic_set(&nvmeq->found, 0);
 	dev->ctrl.queue_count++;
 
 	return 0;
@@ -2273,7 +2287,7 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 		nvme_suspend_io_queues(dev);
 		goto retry;
 	}
-	dev_info(dev->ctrl.device, "thanos v4 %d/%d/%d default/read/poll queues\n",
+	dev_info(dev->ctrl.device, "%d/%d/%d default/read/poll queues\n",
 					dev->io_queues[HCTX_TYPE_DEFAULT],
 					dev->io_queues[HCTX_TYPE_READ],
 					dev->io_queues[HCTX_TYPE_POLL]);
