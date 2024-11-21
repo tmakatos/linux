@@ -218,6 +218,7 @@ struct nvme_queue {
 	atomic_t outstanding;
 	atomic_t in_process_cq;
 	atomic_t found;
+	atomic_t cpu;
 };
 
 /*
@@ -496,8 +497,8 @@ static void noinline nvme_sq_copy_cmd(struct nvme_queue *nvmeq,
 	int new_outstanding = atomic_inc_return(&nvmeq->outstanding);
 
 	WARN(atomic_read(&nvmeq->in_process_cq),
-		 "submitting while completing, found=%d",
-		 atomic_read(&nvmeq->found));
+		 "submitting while completing, found=%d, cpu=%u",
+		 atomic_read(&nvmeq->found), atomic_read(&nvmeq->cpu));
 
 	if (unlikely(new_outstanding > nvmeq->q_depth)) {
 		dev_warn(nvmeq->dev->ctrl.device,
@@ -1055,6 +1056,7 @@ static int noinline nvme_process_cq(struct nvme_queue *nvmeq)
 	int new_outstanding;
 	u16 orig_sq_tail = nvmeq->sq_tail;
 
+	atomic_set(&nvmeq->cpu, smp_processor_id());
 	atomic_set(&nvmeq->in_process_cq, 1);
 
 	while (nvme_cqe_pending(nvmeq)) {
@@ -1078,6 +1080,7 @@ static int noinline nvme_process_cq(struct nvme_queue *nvmeq)
 	}
 
 	atomic_set(&nvmeq->in_process_cq, 0);
+	atomic_set(&nvmeq->cpu, ~1);
 
 	new_submitted = atomic64_read(&nvmeq->submitted);
 	if (new_submitted > old_submitted) {
@@ -1569,6 +1572,7 @@ static int nvme_alloc_queue(struct nvme_dev *dev, int qid, int depth)
 	atomic_set(&nvmeq->outstanding, 0);
 	atomic_set(&nvmeq->in_process_cq, 0);
 	atomic_set(&nvmeq->found, 0);
+	atomic_set(&nvmeq->cpu, ~1);
 	dev->ctrl.queue_count++;
 
 	return 0;
